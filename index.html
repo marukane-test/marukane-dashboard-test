@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>丸兼林業 現場ダッシュボード（検証用）</title>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 0; }
+  #lockScreen {
+    height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: #2f4f3f; color: #fff;
+  }
+  #lockScreen input {
+    padding: 10px; font-size: 16px; width: 220px; border-radius: 4px; border: none; margin-top: 12px;
+  }
+  #lockScreen button {
+    padding: 10px 20px; font-size: 16px; margin-top: 12px; border-radius: 4px; border: none;
+    background: #7cb342; color: #fff; cursor: pointer;
+  }
+  #errorMsg { color: #ffb3b3; margin-top: 8px; height: 20px; }
+  #content { display: none; padding: 24px; }
+</style>
+</head>
+<body>
+
+<div id="lockScreen">
+  <h2>丸兼林業 現場ダッシュボード（検証用）</h2>
+  <input type="password" id="pwInput" placeholder="パスワードを入力">
+  <button onclick="checkPassword()">開く</button>
+  <div id="errorMsg"></div>
+</div>
+
+<div id="content">
+  <h1>ここにダッシュボード本体が入ります</h1>
+  <p>（B案：GitHub Pagesでのパスワードゲート検証用ページ）</p>
+</div>
+
+<script>
+// ここを変更すればパスワードを更新できる（設定は1箇所に集約）
+// 実際のパスワードそのものではなく、SHA-256ハッシュ値を保存している
+const CORRECT_HASH = "937e8d5fbb48bd4949536cd65b8d35c426b80d2f830c5c308e2cdec422ae2244"; // 仮パスワード: test1234
+
+async function sha256(text) {
+  const data = new TextEncoder().encode(text);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function checkPassword() {
+  const input = document.getElementById('pwInput').value;
+  const hash = await sha256(input);
+  if (hash === CORRECT_HASH) {
+    sessionStorage.setItem('unlocked', 'yes');
+    document.getElementById('lockScreen').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  } else {
+    document.getElementById('errorMsg').textContent = 'パスワードが違います';
+  }
+}
+
+// 同じブラウザタブ内であれば、再入力なしで見られるようにする
+window.onload = function() {
+  if (sessionStorage.getItem('unlocked') === 'yes') {
+    document.getElementById('lockScreen').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  }
+};
+</script>
+
+</body>
+</html>
