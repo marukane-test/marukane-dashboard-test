@@ -3,9 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>丸兼林業 現場ダッシュボード（検証用）</title>
+<title>丸兼林業 現場ダッシュボード（検証用・B案）</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
-  body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 0; }
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 0; color: #222; }
+
+  /* --- パスワードゲート --- */
   #lockScreen {
     height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: #2f4f3f; color: #fff;
@@ -18,7 +22,28 @@
     background: #7cb342; color: #fff; cursor: pointer;
   }
   #errorMsg { color: #ffb3b3; margin-top: 8px; height: 20px; }
-  #content { display: none; padding: 24px; }
+
+  /* --- ダッシュボード本体 --- */
+  #content { display: none; }
+  header.topbar {
+    background: #2f4f3f; color: #fff; padding: 16px 20px;
+  }
+  header.topbar h1 { margin: 0; font-size: 20px; }
+  #tabNav {
+    display: flex; flex-wrap: wrap; background: #eef2ee; border-bottom: 1px solid #ccc;
+  }
+  #tabNav button {
+    padding: 12px 16px; border: none; background: none; cursor: pointer; font-size: 14px;
+  }
+  #tabNav button.active { background: #fff; font-weight: bold; border-bottom: 3px solid #7cb342; }
+  #tabContent { padding: 20px; max-width: 900px; margin: 0 auto; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: right; font-size: 14px; }
+  th:first-child, td:first-child { text-align: left; }
+  h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
+  .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  #statusMsg { padding: 20px; font-size: 14px; color: #666; }
+  canvas { max-width: 500px; }
 </style>
 </head>
 <body>
@@ -31,15 +56,67 @@
 </div>
 
 <div id="content">
-  <h1>ここにダッシュボード本体が入ります</h1>
-  <p>（B案：GitHub Pagesでのパスワードゲート検証用ページ）</p>
+  <header class="topbar"><h1>丸兼林業 現場ダッシュボード（検証用・B案）</h1></header>
+  <div id="tabNav"></div>
+  <div id="tabContent"><div id="statusMsg">データを読み込み中...</div></div>
 </div>
 
 <script>
-// ここを変更すればパスワードを更新できる（設定は1箇所に集約）
-// 実際のパスワードそのものではなく、SHA-256ハッシュ値を保存している
-const CORRECT_HASH = "937e8d5fbb48bd4949536cd65b8d35c426b80d2f830c5c308e2cdec422ae2244"; // 仮パスワード: test1234
+// ============================================================
+// CONFIG：目標値・区分マッピングなど「変わりうる値」はすべてここに集約する
+// （A案 Apps Script版と同じ設計方針。値を変える場合はここだけ直せばよい）
+// ============================================================
+const CONFIG = {
+  CSV_PATH: 'data.csv', // 同じリポジトリに置くCSVファイル名（更新時はこのファイルを差し替える）
 
+  SITES: [
+    '設楽町段戸国有林',
+    '豊田市刈萱町',
+    '豊田市黒田町',
+    '豊田市平岩町',
+    'その他',
+    '豊田市大洞町',
+  ],
+
+  PROGRESS_CATEGORIES: ['伐倒', '集材', '造材', '運搬'],
+
+  // 【暫定ルール・要確認】切り捨て伐倒は進捗集計から除外し別枠表示（人工は生産性計算に含める）。
+  // その他（林内/林外作業）・作業道作設・機械修理は「その他作業」に一括（進捗集計対象外）。
+  // → 酒井社長との合意待ち。次回ミーティングで要相談。
+  CATEGORY_MAP: {
+    '伐倒': '伐倒',
+    '集材': '集材',
+    '造材': '造材',
+    '運搬': '運搬',
+    'フォワーダー運搬': '運搬',
+    '切り捨て伐倒': '切り捨て伐倒',
+    'その他（林内作業）': 'その他作業',
+    'その他（林外作業）': 'その他作業',
+    '作業道作設': 'その他作業',
+    '機械修理': 'その他作業',
+  },
+
+  // 【重要・未解決】伐倒・集材・造材・運搬は同じ木の工程のため単純合算はできない。
+  // 年間目標4,500㎥の進捗は「運搬（＝搬出量）」の累計を代理指標として使う（酒井社長の最終確認待ち）。
+  ANNUAL_TARGET_M3: 4500,
+  ANNUAL_TARGET_CATEGORY: '運搬',
+
+  // 現場×月×区分ごとの計画値（㎥）。【要入力】実数値がまだないため空。
+  // 構造：MONTHLY_TARGETS['現場名']['YYYY-MM']['区分名'] = 計画値
+  MONTHLY_TARGETS: {
+    // '豊田市刈萱町': { '2026-07': { '伐倒': 50, '集材': 20, '造材': 80, '運搬': 40 } },
+  },
+
+  // 1人工あたりの標準労働時間（h）。【要確認】暫定値。
+  HOURS_PER_NINKU: 8,
+
+  // パスワードのSHA-256ハッシュ（平文パスワードは書かない）。仮パスワード: test1234
+  CORRECT_HASH: '937e8d5fbb48bd4949536cd65b8d35c426b80d2f830c5c308e2cdec422ae2244',
+};
+
+// ============================================================
+// パスワードゲート
+// ============================================================
 async function sha256(text) {
   const data = new TextEncoder().encode(text);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -49,22 +126,254 @@ async function sha256(text) {
 async function checkPassword() {
   const input = document.getElementById('pwInput').value;
   const hash = await sha256(input);
-  if (hash === CORRECT_HASH) {
+  if (hash === CONFIG.CORRECT_HASH) {
     sessionStorage.setItem('unlocked', 'yes');
-    document.getElementById('lockScreen').style.display = 'none';
-    document.getElementById('content').style.display = 'block';
+    unlock();
   } else {
     document.getElementById('errorMsg').textContent = 'パスワードが違います';
   }
 }
 
-// 同じブラウザタブ内であれば、再入力なしで見られるようにする
-window.onload = function() {
+function unlock() {
+  document.getElementById('lockScreen').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+  loadDashboard();
+}
+
+window.onload = function () {
   if (sessionStorage.getItem('unlocked') === 'yes') {
-    document.getElementById('lockScreen').style.display = 'none';
-    document.getElementById('content').style.display = 'block';
+    unlock();
   }
 };
+
+// ============================================================
+// データ読み込み・集計（A案 Apps Script版と同じロジック）
+// ============================================================
+let SUMMARY = null; // { overall, bySite } を1回だけ計算してキャッシュ
+let currentChart = null;
+
+async function loadDashboard() {
+  try {
+    const res = await fetch(CONFIG.CSV_PATH, { cache: 'no-store' });
+    if (!res.ok) throw new Error('data.csvが見つかりません');
+    let text = await res.text();
+    text = text.replace(/^﻿/, ''); // BOM除去
+
+    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+    const rows = parsed.data;
+    const entries = buildEntries(rows);
+    SUMMARY = aggregate(entries);
+
+    buildTabs();
+    showTab('全体');
+  } catch (err) {
+    document.getElementById('tabContent').innerHTML =
+      '<div id="statusMsg">データの読み込みに失敗しました：' + err.message +
+      '<br>data.csvがこのリポジトリのルートに置かれているか確認してください。</div>';
+  }
+}
+
+function buildEntries(rows) {
+  const entries = [];
+  rows.forEach(row => {
+    const date = row['日付'];
+    if (!date) return;
+    if (row['①作業内容']) {
+      entries.push(makeEntry(
+        date,
+        row['現場名'] || row['現場名（記入）'],
+        row['①作業内容'],
+        row['①材積（㎥)'] || row['①材積（㎥）'],
+        row['①作業時間']
+      ));
+    }
+    // 「2つ目の作業あり」がfalseでも②作業内容が入っているケースが実データに存在するため、
+    // フラグではなく②作業内容の有無で判定する
+    if (row['②作業内容']) {
+      entries.push(makeEntry(
+        date,
+        row['現場名2'] || row['現場名(記入)'],
+        row['②作業内容'],
+        row['②材積（㎥）'],
+        row['②作業時間']
+      ));
+    }
+  });
+  return entries;
+}
+
+function makeEntry(date, site, categoryRaw, volumeStr, hoursMsStr) {
+  const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
+  return {
+    date: date,
+    site: site || '(不明)',
+    categoryRaw: categoryRaw,
+    category: category,
+    volume: parseFloat(volumeStr) || 0,
+    hours: (parseFloat(hoursMsStr) || 0) / 3600000,
+  };
+}
+
+function emptySiteSummary() {
+  return {
+    latestDate: null,
+    latestByCategory: {},
+    cumulativeByCategory: {},
+    monthlyByCategory: {},
+    hoursByCategory: {},
+  };
+}
+
+function aggregate(entries) {
+  const bySite = {};
+  CONFIG.SITES.forEach(s => { bySite[s] = emptySiteSummary(); });
+  const overall = emptySiteSummary();
+
+  if (entries.length === 0) return { overall, bySite };
+
+  const latestDate = entries.reduce((max, e) => (e.date > max ? e.date : max), entries[0].date);
+  overall.latestDate = latestDate;
+
+  entries.forEach(e => {
+    if (!bySite[e.site]) bySite[e.site] = emptySiteSummary();
+    [bySite[e.site], overall].forEach(target => {
+      target.latestDate = latestDate;
+
+      target.cumulativeByCategory[e.category] = (target.cumulativeByCategory[e.category] || 0) + e.volume;
+      target.hoursByCategory[e.category] = (target.hoursByCategory[e.category] || 0) + e.hours;
+
+      if (e.date === latestDate) {
+        target.latestByCategory[e.category] = (target.latestByCategory[e.category] || 0) + e.volume;
+      }
+
+      const ym = e.date.slice(0, 7);
+      if (!target.monthlyByCategory[ym]) target.monthlyByCategory[ym] = {};
+      target.monthlyByCategory[ym][e.category] = (target.monthlyByCategory[ym][e.category] || 0) + e.volume;
+    });
+  });
+
+  return { overall, bySite };
+}
+
+function getMonthlyTarget(site, ym, category) {
+  const siteTargets = CONFIG.MONTHLY_TARGETS[site];
+  if (!siteTargets || !siteTargets[ym]) return 0;
+  return siteTargets[ym][category] || 0;
+}
+
+// ============================================================
+// タブ表示
+// ============================================================
+function buildTabs() {
+  const nav = document.getElementById('tabNav');
+  nav.innerHTML = '';
+  const names = ['全体', ...CONFIG.SITES, '経営者ページ'];
+  names.forEach(name => {
+    const btn = document.createElement('button');
+    btn.textContent = name;
+    btn.onclick = () => showTab(name);
+    btn.id = 'tabbtn_' + name;
+    nav.appendChild(btn);
+  });
+}
+
+function showTab(name) {
+  document.querySelectorAll('#tabNav button').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById('tabbtn_' + name);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  const el = document.getElementById('tabContent');
+  if (name === '経営者ページ') {
+    el.innerHTML = renderExecutivePage(SUMMARY.overall);
+  } else if (name === '全体') {
+    el.innerHTML = renderSitePage('全体', SUMMARY.overall);
+    renderChart('全体', SUMMARY.overall);
+  } else {
+    const s = SUMMARY.bySite[name] || emptySiteSummary();
+    el.innerHTML = renderSitePage(name, s);
+    renderChart(name, s);
+  }
+}
+
+function renderSitePage(name, s) {
+  let html = '<h2>' + name + '：前日実績（' + (s.latestDate || '-') + '）／累計実績</h2>';
+  html += '<table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+  html += '<tr><td>前日実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.latestByCategory[c] || 0) + '</td>').join('') + '</tr>';
+  html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.cumulativeByCategory[c] || 0) + '</td>').join('') + '</tr>';
+  html += '</table>';
+
+  html += '<h2>参考（進捗集計には含まない）</h2>';
+  html += '<table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
+  ['切り捨て伐倒', 'その他作業'].forEach(cat => {
+    html += '<tr><td>' + cat + '</td><td>' + (s.cumulativeByCategory[cat] || 0) + '</td><td>' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
+  });
+  html += '</table>';
+
+  html += '<h2>月次 計画／実績／進捗率</h2>';
+  html += '<table><tr><th>月</th><th>区分</th><th>計画(㎥)</th><th>実績(㎥)</th><th>進捗率(%)</th></tr>';
+  const monthKeys = Object.keys(s.monthlyByCategory).sort();
+  monthKeys.forEach(ym => {
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      const actual = s.monthlyByCategory[ym][cat] || 0;
+      const target = getMonthlyTarget(name, ym, cat);
+      const pct = target > 0 ? Math.round((actual / target) * 1000) / 10 : '-';
+      html += '<tr><td>' + ym + '</td><td>' + cat + '</td><td>' + target + '</td><td>' + actual + '</td><td>' + pct + '</td></tr>';
+    });
+  });
+  html += '</table>';
+
+  html += '<h2>進捗率（直近月・4区分）</h2><canvas id="progressChart" height="200"></canvas>';
+
+  const totalVolume = Object.values(s.cumulativeByCategory).reduce((a, b) => a + b, 0);
+  const totalHours = Object.values(s.hoursByCategory).reduce((a, b) => a + b, 0);
+  const ninku = totalHours / CONFIG.HOURS_PER_NINKU;
+  const productivity = ninku > 0 ? Math.round((totalVolume / ninku) * 100) / 100 : 0;
+  html += '<h2>生産量／人工／生産性（累計・全区分合算）</h2>';
+  html += '<table><tr><th>生産量(㎥)</th><th>人工</th><th>生産性(㎥/人工)</th></tr>';
+  html += '<tr><td>' + totalVolume + '</td><td>' + (Math.round(ninku * 10) / 10) + '</td><td>' + productivity + '</td></tr></table>';
+
+  return html;
+}
+
+function renderExecutivePage(overall) {
+  const actual = overall.cumulativeByCategory[CONFIG.ANNUAL_TARGET_CATEGORY] || 0;
+  const target = CONFIG.ANNUAL_TARGET_M3;
+  const pct = target > 0 ? Math.round((actual / target) * 1000) / 10 : 0;
+  let html = '<h2>経営者ページ：年間目標の進捗</h2>';
+  html += '<div class="note">【留意点】伐倒・集材・造材・運搬は同じ木の工程のため単純合算できません。' +
+    'この進捗は「運搬（＝搬出量）」区分の累計を代理指標として使っています。' +
+    '集計ルールの是非は酒井社長の確認待ちです。</div>';
+  html += '<table><tr><th>年間目標(㎥)</th><th>累計実績(㎥・搬出量ベース)</th><th>進捗率(%)</th></tr>';
+  html += '<tr><td>' + target + '</td><td>' + actual + '</td><td>' + pct + '</td></tr></table>';
+  return html;
+}
+
+function renderChart(name, s) {
+  const monthKeys = Object.keys(s.monthlyByCategory).sort();
+  const lastMonth = monthKeys[monthKeys.length - 1];
+  const data = CONFIG.PROGRESS_CATEGORIES.map(cat => {
+    if (!lastMonth) return 0;
+    const actual = (s.monthlyByCategory[lastMonth] && s.monthlyByCategory[lastMonth][cat]) || 0;
+    const target = getMonthlyTarget(name, lastMonth, cat);
+    return target > 0 ? Math.round((actual / target) * 1000) / 10 : 0;
+  });
+
+  const ctx = document.getElementById('progressChart');
+  if (!ctx) return;
+  if (currentChart) currentChart.destroy();
+  currentChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: CONFIG.PROGRESS_CATEGORIES,
+      datasets: [{ label: '進捗率(%)', data: data, backgroundColor: '#7cb342' }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: false,
+      plugins: { legend: { display: false } },
+    },
+  });
+}
 </script>
 
 </body>
