@@ -376,8 +376,8 @@ function renderSitePage(name, s) {
   const { monthKeys, totals } = computeMonthlyTotals(name, s);
   html += '<h2>月次 計画／実績</h2>';
   html += '<div class="table-scroll"><table>';
-  html += '<tr><th rowspan="2">月</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
-  html += '<tr>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
+  html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
+  html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
   monthKeys.forEach(ym => {
     html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
       const actual = s.monthlyByCategory[ym][cat] || 0;
