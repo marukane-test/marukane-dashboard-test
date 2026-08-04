@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>丸兼林業 現場ダッシュボード（検証用・B案）</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 0; color: #222; }
 
@@ -36,14 +35,44 @@
     padding: 12px 16px; border: none; background: none; cursor: pointer; font-size: 14px;
   }
   #tabNav button.active { background: #fff; font-weight: bold; border-bottom: 3px solid #7cb342; }
-  #tabContent { padding: 20px; max-width: 900px; margin: 0 auto; }
+  #tabContent { padding: 16px; max-width: 900px; margin: 0 auto; }
   table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: right; font-size: 14px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: right; font-size: 13px; white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
   h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
   .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
   #statusMsg { padding: 20px; font-size: 14px; color: #666; }
   canvas { max-width: 500px; }
+
+  /* スマホでも表がはみ出さないよう横スクロール可能にする */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 20px; border-radius: 4px; }
+  .table-scroll table { margin-bottom: 0; min-width: 480px; }
+
+  /* 区分ごとの進捗バー（モックアップの4区分・個別ボックス形式） */
+  .progressRow {
+    display: flex; align-items: stretch; border: 1px solid #ddd; border-radius: 4px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .progressLabel {
+    width: 64px; flex-shrink: 0; background: #eef2ee; display: flex; align-items: center;
+    justify-content: center; font-weight: bold; font-size: 13px; text-align: center; padding: 4px;
+  }
+  .progressBarWrap {
+    flex: 1; position: relative; margin: 10px; height: 28px; background: #f0f0f0; border-radius: 4px; overflow: hidden;
+  }
+  .progressBarFill { height: 100%; background: #2f7d5c; transition: width 0.3s; }
+  .progressBarFill.over { background: #e08a2b; }
+  .progressPctLabel {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    font-size: 12px; font-weight: bold; color: #222;
+  }
+
+  @media (max-width: 480px) {
+    header.topbar h1 { font-size: 16px; }
+    #tabNav button { padding: 10px 10px; font-size: 12px; }
+    #tabContent { padding: 10px; }
+    .progressLabel { width: 52px; font-size: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -150,7 +179,6 @@ window.onload = function () {
 // データ読み込み・集計（A案 Apps Script版と同じロジック）
 // ============================================================
 let SUMMARY = null; // { overall, bySite } を1回だけ計算してキャッシュ
-let currentChart = null;
 
 async function loadDashboard() {
   try {
@@ -302,52 +330,89 @@ function showTab(name) {
     el.innerHTML = renderExecutivePage(SUMMARY.overall);
   } else if (name === '全体') {
     el.innerHTML = renderSitePage('全体', SUMMARY.overall);
-    renderChart('全体', SUMMARY.overall);
   } else {
     const s = SUMMARY.bySite[name] || emptySiteSummary();
     el.innerHTML = renderSitePage(name, s);
-    renderChart(name, s);
   }
+}
+
+// 月次の計画・実績を集計し、区分ごとの累計進捗率も算出する
+// （7/14議事録モックアップ準拠：進捗率は月ごとではなく「合計」に対して1つだけ算出）
+function computeMonthlyTotals(name, s) {
+  const monthKeys = Object.keys(s.monthlyByCategory).sort();
+  const totals = {};
+  CONFIG.PROGRESS_CATEGORIES.forEach(c => { totals[c] = { target: 0, actual: 0 }; });
+  monthKeys.forEach(ym => {
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      const actual = s.monthlyByCategory[ym][cat] || 0;
+      const target = getMonthlyTarget(name, ym, cat);
+      totals[cat].target += target;
+      totals[cat].actual += actual;
+    });
+  });
+  return { monthKeys, totals };
 }
 
 function renderSitePage(name, s) {
   const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
   let html = '<h2>' + name + '：直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
   html += '<div class="note">データ最終更新日：' + (s.latestDate || '-') + '</div>';
-  html += '<table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+  html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
   html += '<tr><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.recentWeekByCategory[c] || 0) + '</td>').join('') + '</tr>';
   html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.cumulativeByCategory[c] || 0) + '</td>').join('') + '</tr>';
-  html += '</table>';
+  html += '</table></div>';
 
   html += '<h2>参考（進捗集計には含まない）</h2>';
-  html += '<table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
+  html += '<div class="table-scroll"><table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
   ['切り捨て伐倒', 'その他作業'].forEach(cat => {
     html += '<tr><td>' + cat + '</td><td>' + (s.cumulativeByCategory[cat] || 0) + '</td><td>' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
   });
-  html += '</table>';
+  html += '</table></div>';
 
-  html += '<h2>月次 計画／実績／進捗率</h2>';
-  html += '<table><tr><th>月</th><th>区分</th><th>計画(㎥)</th><th>実績(㎥)</th><th>進捗率(%)</th></tr>';
-  const monthKeys = Object.keys(s.monthlyByCategory).sort();
+  // --- 月次 計画／実績（横長表：7/14議事録モックアップ準拠） ---
+  const { monthKeys, totals } = computeMonthlyTotals(name, s);
+  html += '<h2>月次 計画／実績</h2>';
+  html += '<div class="table-scroll"><table>';
+  html += '<tr><th rowspan="2">月</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
+  html += '<tr>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
   monthKeys.forEach(ym => {
-    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+    html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
       const actual = s.monthlyByCategory[ym][cat] || 0;
       const target = getMonthlyTarget(name, ym, cat);
-      const pct = target > 0 ? Math.round((actual / target) * 1000) / 10 : '-';
-      html += '<tr><td>' + ym + '</td><td>' + cat + '</td><td>' + target + '</td><td>' + actual + '</td><td>' + pct + '</td></tr>';
-    });
+      return '<td>' + target + '</td><td>' + actual + '</td>';
+    }).join('') + '</tr>';
   });
-  html += '</table>';
+  html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
+    '<td><strong>' + totals[cat].target + '</strong></td><td><strong>' + totals[cat].actual + '</strong></td>'
+  ).join('') + '</tr>';
+  // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
+  html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+    const pct = totals[cat].target > 0 ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : null;
+    return '<td colspan="2">' + (pct === null ? '-' : pct + '%') + '</td>';
+  }).join('') + '</tr>';
+  html += '</table></div>';
 
-  html += '<h2>進捗率（直近月・4区分）</h2><canvas id="progressChart" height="200"></canvas>';
+  // --- 進捗率バー（区分ごとに個別ボックス：モックアップ準拠） ---
+  html += '<h2>進捗率（累計・区分別）</h2>';
+  CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+    const hasTarget = totals[cat].target > 0;
+    const pct = hasTarget ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : 0;
+    const widthPct = Math.min(pct, 100);
+    const overClass = pct >= 100 ? ' over' : '';
+    html += '<div class="progressRow">' +
+      '<div class="progressLabel">' + cat + '</div>' +
+      '<div class="progressBarWrap"><div class="progressBarFill' + overClass + '" style="width:' + widthPct + '%"></div>' +
+      '<span class="progressPctLabel">' + (hasTarget ? pct + '%' : '計画未設定') + '</span></div>' +
+      '</div>';
+  });
 
   const totalVolume = Object.values(s.cumulativeByCategory).reduce((a, b) => a + b, 0);
   const totalHours = Object.values(s.hoursByCategory).reduce((a, b) => a + b, 0);
   const ninku = totalHours / CONFIG.HOURS_PER_NINKU;
   const productivity = ninku > 0 ? Math.round((totalVolume / ninku) * 100) / 100 : 0;
   html += '<h2>生産量／人工／生産性（累計・全区分合算）</h2>';
-  html += '<table><tr><th>生産量(㎥)</th><th>人工</th><th>生産性(㎥/人工)</th></tr>';
-  html += '<tr><td>' + totalVolume + '</td><td>' + (Math.round(ninku * 10) / 10) + '</td><td>' + productivity + '</td></tr></table>';
+  html += '<div class="table-scroll"><table><tr><th>生産量(㎥)</th><th>人工</th><th>生産性(㎥/人工)</th></tr>';
+  html += '<tr><td>' + totalVolume + '</td><td>' + (Math.round(ninku * 10) / 10) + '</td><td>' + productivity + '</td></tr></table></div>';
 
   return html;
 }
@@ -365,32 +430,6 @@ function renderExecutivePage(overall) {
   return html;
 }
 
-function renderChart(name, s) {
-  const monthKeys = Object.keys(s.monthlyByCategory).sort();
-  const lastMonth = monthKeys[monthKeys.length - 1];
-  const data = CONFIG.PROGRESS_CATEGORIES.map(cat => {
-    if (!lastMonth) return 0;
-    const actual = (s.monthlyByCategory[lastMonth] && s.monthlyByCategory[lastMonth][cat]) || 0;
-    const target = getMonthlyTarget(name, lastMonth, cat);
-    return target > 0 ? Math.round((actual / target) * 1000) / 10 : 0;
-  });
-
-  const ctx = document.getElementById('progressChart');
-  if (!ctx) return;
-  if (currentChart) currentChart.destroy();
-  currentChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: CONFIG.PROGRESS_CATEGORIES,
-      datasets: [{ label: '進捗率(%)', data: data, backgroundColor: '#7cb342' }],
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: false,
-      plugins: { legend: { display: false } },
-    },
-  });
-}
 </script>
 
 </body>
