@@ -217,11 +217,20 @@ function makeEntry(date, site, categoryRaw, volumeStr, hoursMsStr) {
 function emptySiteSummary() {
   return {
     latestDate: null,
-    latestByCategory: {},
+    weekStartDate: null,
+    weekEndDate: null,
+    recentWeekByCategory: {}, // 【週次更新前提】直近1週間分の実績（旧：前日実績）
     cumulativeByCategory: {},
     monthlyByCategory: {},
     hoursByCategory: {},
   };
+}
+
+// 'YYYY-MM-DD' の文字列からdays日前の日付文字列を返す
+function subtractDays(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
 function aggregate(entries) {
@@ -231,19 +240,25 @@ function aggregate(entries) {
 
   if (entries.length === 0) return { overall, bySite };
 
+  // 【週次更新前提】「前日実績」ではなく、データ最終日を含む直近7日間を1つの更新分として扱う
   const latestDate = entries.reduce((max, e) => (e.date > max ? e.date : max), entries[0].date);
+  const weekStartDate = subtractDays(latestDate, 6);
   overall.latestDate = latestDate;
+  overall.weekStartDate = weekStartDate;
+  overall.weekEndDate = latestDate;
 
   entries.forEach(e => {
     if (!bySite[e.site]) bySite[e.site] = emptySiteSummary();
     [bySite[e.site], overall].forEach(target => {
       target.latestDate = latestDate;
+      target.weekStartDate = weekStartDate;
+      target.weekEndDate = latestDate;
 
       target.cumulativeByCategory[e.category] = (target.cumulativeByCategory[e.category] || 0) + e.volume;
       target.hoursByCategory[e.category] = (target.hoursByCategory[e.category] || 0) + e.hours;
 
-      if (e.date === latestDate) {
-        target.latestByCategory[e.category] = (target.latestByCategory[e.category] || 0) + e.volume;
+      if (e.date >= weekStartDate && e.date <= latestDate) {
+        target.recentWeekByCategory[e.category] = (target.recentWeekByCategory[e.category] || 0) + e.volume;
       }
 
       const ym = e.date.slice(0, 7);
@@ -296,9 +311,11 @@ function showTab(name) {
 }
 
 function renderSitePage(name, s) {
-  let html = '<h2>' + name + '：前日実績（' + (s.latestDate || '-') + '）／累計実績</h2>';
+  const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
+  let html = '<h2>' + name + '：直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
+  html += '<div class="note">データ最終更新日：' + (s.latestDate || '-') + '</div>';
   html += '<table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
-  html += '<tr><td>前日実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.latestByCategory[c] || 0) + '</td>').join('') + '</tr>';
+  html += '<tr><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.recentWeekByCategory[c] || 0) + '</td>').join('') + '</tr>';
   html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.cumulativeByCategory[c] || 0) + '</td>').join('') + '</tr>';
   html += '</table>';
 
