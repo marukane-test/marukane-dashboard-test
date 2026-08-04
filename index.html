@@ -40,7 +40,8 @@
   th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: right; font-size: 13px; white-space: nowrap; }
   th { text-align: center; background: #f7f9f7; }
   th:first-child, td:first-child { text-align: left; }
-  td.pct-cell { text-align: center; font-weight: bold; }
+  td.num { text-align: right !important; }
+  td.pct-cell { text-align: center !important; font-weight: bold; }
   h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
   .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
   #statusMsg { padding: 20px; font-size: 14px; color: #666; }
@@ -360,14 +361,14 @@ function renderSitePage(name, s) {
   let html = '<h2>' + name + '：直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
   html += '<div class="note">データ最終更新日：' + (s.latestDate || '-') + '</div>';
   html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
-  html += '<tr><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.recentWeekByCategory[c] || 0) + '</td>').join('') + '</tr>';
-  html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td>' + (s.cumulativeByCategory[c] || 0) + '</td>').join('') + '</tr>';
+  html += '<tr><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td class="num">' + (s.recentWeekByCategory[c] || 0) + '</td>').join('') + '</tr>';
+  html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td class="num">' + (s.cumulativeByCategory[c] || 0) + '</td>').join('') + '</tr>';
   html += '</table></div>';
 
   html += '<h2>参考（進捗集計には含まない）</h2>';
   html += '<div class="table-scroll"><table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
   ['切り捨て伐倒', 'その他作業'].forEach(cat => {
-    html += '<tr><td>' + cat + '</td><td>' + (s.cumulativeByCategory[cat] || 0) + '</td><td>' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
+    html += '<tr><td>' + cat + '</td><td class="num">' + (s.cumulativeByCategory[cat] || 0) + '</td><td class="num">' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
   });
   html += '</table></div>';
 
@@ -381,11 +382,11 @@ function renderSitePage(name, s) {
     html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
       const actual = s.monthlyByCategory[ym][cat] || 0;
       const target = getMonthlyTarget(name, ym, cat);
-      return '<td>' + target + '</td><td>' + actual + '</td>';
+      return '<td class="num">' + target + '</td><td class="num">' + actual + '</td>';
     }).join('') + '</tr>';
   });
   html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
-    '<td><strong>' + totals[cat].target + '</strong></td><td><strong>' + totals[cat].actual + '</strong></td>'
+    '<td class="num"><strong>' + totals[cat].target + '</strong></td><td class="num"><strong>' + totals[cat].actual + '</strong></td>'
   ).join('') + '</tr>';
   // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
   html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
@@ -414,7 +415,7 @@ function renderSitePage(name, s) {
   const productivity = ninku > 0 ? Math.round((totalVolume / ninku) * 100) / 100 : 0;
   html += '<h2>生産量／人工／生産性（累計・全区分合算）</h2>';
   html += '<div class="table-scroll"><table><tr><th>生産量(㎥)</th><th>人工</th><th>生産性(㎥/人工)</th></tr>';
-  html += '<tr><td>' + totalVolume + '</td><td>' + (Math.round(ninku * 10) / 10) + '</td><td>' + productivity + '</td></tr></table></div>';
+  html += '<tr><td class="num">' + totalVolume + '</td><td class="num">' + (Math.round(ninku * 10) / 10) + '</td><td class="num">' + productivity + '</td></tr></table></div>';
 
   return html;
 }
@@ -428,7 +429,7 @@ function renderExecutivePage(overall) {
     'この進捗は「運搬（＝搬出量）」区分の累計を代理指標として使っています。' +
     '集計ルールの是非は酒井社長の確認待ちです。</div>';
   html += '<table><tr><th>年間目標(㎥)</th><th>累計実績(㎥・搬出量ベース)</th><th>進捗率(%)</th></tr>';
-  html += '<tr><td>' + target + '</td><td>' + actual + '</td><td>' + pct + '</td></tr></table>';
+  html += '<tr><td class="num">' + target + '</td><td class="num">' + actual + '</td><td class="num">' + pct + '</td></tr></table>';
   return html;
 }
 
